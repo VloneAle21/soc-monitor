@@ -1,0 +1,2 @@
+# No third-party runtime dependencies — soc-monitor uses only the
+# Python standard library. Python 3.10+ required.
