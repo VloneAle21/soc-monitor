@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="993" height="312" viewBox="0 0 993 312" role="img" aria-label="SOC Monitor detectando un ataque en tiempo real">
+<style>.t{font-family:ui-monospace,'SF Mono',SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:13px}
+.cmd{animation:teclear 8.38s steps(47) infinite}
+.cur{animation:cursor 1s step-end infinite}
+.l0{opacity:0;animation:ap0 8.38s linear infinite}
+.l1{opacity:0;animation:ap1 8.38s linear infinite}
+.l2{opacity:0;animation:ap2 8.38s linear infinite}
+.l3{opacity:0;animation:ap3 8.38s linear infinite}
+.l4{opacity:0;animation:ap4 8.38s linear infinite}
+.l5{opacity:0;animation:ap5 8.38s linear infinite}
+.l6{opacity:0;animation:ap6 8.38s linear infinite}
+.l7{opacity:0;animation:ap7 8.38s linear infinite}
+.l8{opacity:0;animation:ap8 8.38s linear infinite}
+.l9{opacity:0;animation:ap9 8.38s linear infinite}
+@keyframes teclear{0%{width:0}13.126%,100%{width:348.7px}}
+@keyframes cursor{0%,49%{opacity:1}50%,100%{opacity:0}}
+@keyframes ap0{0%,19.093%{opacity:0}19.493%,100%{opacity:1}}
+@keyframes ap1{0%,24.105%{opacity:0}24.505%,100%{opacity:1}}
+@keyframes ap2{0%,29.117%{opacity:0}29.517%,100%{opacity:1}}
+@keyframes ap3{0%,34.129%{opacity:0}34.529%,100%{opacity:1}}
+@keyframes ap4{0%,39.141%{opacity:0}39.541%,100%{opacity:1}}
+@keyframes ap5{0%,44.153%{opacity:0}44.553%,100%{opacity:1}}
+@keyframes ap6{0%,49.165%{opacity:0}49.565%,100%{opacity:1}}
+@keyframes ap7{0%,54.177%{opacity:0}54.577%,100%{opacity:1}}
+@keyframes ap8{0%,59.189%{opacity:0}59.589%,100%{opacity:1}}
+@keyframes ap9{0%,64.2%{opacity:0}64.600%,100%{opacity:1}}</style>
+<rect width="993" height="312" rx="10" fill="#0d1117" stroke="#30363d"/>
+<path d="M0 10a10 10 0 0 1 10-10h973a10 10 0 0 1 10 10v24H0z" fill="#161b22"/>
+<line x1="0" y1="34" x2="993" y2="34" stroke="#30363d"/>
+<circle cx="22" cy="17.0" r="5.5" fill="#ff5f57"/>
+<circle cx="40" cy="17.0" r="5.5" fill="#febc2e"/>
+<circle cx="58" cy="17.0" r="5.5" fill="#28c840"/>
+<text class="t" x="496.5" y="21.0" fill="#6e7681" text-anchor="middle" font-size="11.5">soc-monitor</text>
+<text class="t" x="22" y="66" fill="#3fb950">$</text>
+<clipPath id="teclado"><rect class="cmd" x="36.84" y="52" width="0" height="20"/></clipPath>
+<text class="t" x="36.84" y="66" fill="#58a6ff" clip-path="url(#teclado)">soc-monitor analizar /var/log/auth.log --seguir</text>
+<rect class="cur" x="387.58000000000004" y="55" width="7" height="14" fill="#c9d1d9" opacity="0.8"/>
+<text class="t l0" x="22" y="106" fill="#f85149" xml:space="preserve">[29/07 12:00:08] [ALTA    ] Fuerza bruta SSH desde 203.0.113.5</text>
+<text class="t l1" x="22" y="126" fill="#6e7681" xml:space="preserve">          ↳ 5 intentos fallidos de autenticación SSH desde 203.0.113.5 en 60s (usuarios probados: admin, oracle, root, test)</text>
+<text class="t l2" x="22" y="146" fill="#6e7681" xml:space="preserve">          ↳ origen: 203.0.113.5 · detector: ssh_fuerza_bruta</text>
+<text class="t l3" x="22" y="166" fill="#d29922" xml:space="preserve">[29/07 12:00:29] [MEDIA   ] Escaneo de puertos desde 203.0.113.5</text>
+<text class="t l4" x="22" y="186" fill="#6e7681" xml:space="preserve">          ↳ 10 conexiones a 10 puertos distintos (52000, 52001, 52002, 52003, 52004, 52005, 52006, 52007, …) en 30s</text>
+<text class="t l5" x="22" y="206" fill="#6e7681" xml:space="preserve">          ↳ origen: 203.0.113.5 · detector: escaneo_puertos</text>
+<text class="t l6" x="22" y="226" fill="#f85149" xml:space="preserve">[29/07 12:01:10] [ALTA    ] Tormenta de fallos de autenticación desde 203.0.113.5</text>
+<text class="t l7" x="22" y="246" fill="#6e7681" xml:space="preserve">          ↳ 8 fallos de autenticación desde 203.0.113.5 en 120s (servicios afectados: dovecot, sshd)</text>
+<text class="t l8" x="22" y="266" fill="#6e7681" xml:space="preserve">          ↳ origen: 203.0.113.5 · detector: tormenta_autenticacion</text>
+<text class="t l9" x="22" y="286" fill="#c9d1d9" xml:space="preserve"></text>
+</svg>
