@@ -22,7 +22,9 @@ Licencia: MIT
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
+import ipaddress
 import json
 import logging
 import os
@@ -30,16 +32,19 @@ import re
 import signal
 import sys
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from collections import defaultdict, deque
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Iterable, Optional
 
 LOG = logging.getLogger("soc-monitor")
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 __author__ = "Alejandro R. (@VloneAle21)"
 
 #: Segundos que una misma pareja (detector, IP) permanece silenciada tras alertar.
@@ -83,7 +88,7 @@ class Severity(str, Enum):
         return _SEVERITY_RANK[self]
 
     @classmethod
-    def coerce(cls, value: "Severity | str") -> "Severity":
+    def coerce(cls, value: Severity | str) -> Severity:
         """Convierte una cadena en `Severity`, aceptando también el inglés."""
         if isinstance(value, cls):
             return value
@@ -115,11 +120,11 @@ class Event:
 
     timestamp: datetime
     source_ip: str
-    username: Optional[str] = None
+    username: str | None = None
     message: str = ""
     raw: str = ""
     kind: EventKind = EventKind.OTHER
-    port: Optional[int] = None
+    port: int | None = None
     facility: str = "auth"
 
     def to_dict(self) -> dict:
@@ -184,24 +189,19 @@ SYSLOG_RE = re.compile(
     r"(?P<host>\S+)\s+(?P<proc>[\w\-./]+)(?:\[\d+\])?:\s+(?P<msg>.*)$"
 )
 
-# sshd: contraseña incorrecta
+# En los logs de sshd la dirección siempre va detrás de «from», así que basta
+# con capturar el token y validarlo: eso cubre IPv4 e IPv6 sin necesidad de un
+# regex de IPv6, que es notoriamente difícil de escribir bien.
 SSH_FAIL_RE = re.compile(
-    r"Failed (?:password|publickey) for (?:invalid user )?(?P<user>\S+) "
-    r"from (?P<ip>\d{1,3}(?:\.\d{1,3}){3})"
+    r"Failed (?:password|publickey) for (?:invalid user )?(?P<user>\S+) from (?P<ip>\S+)"
 )
 # sshd: intento contra un usuario inexistente (fase previa a la autenticación)
-SSH_INVALID_USER_RE = re.compile(
-    r"Invalid user (?P<user>\S+) from (?P<ip>\d{1,3}(?:\.\d{1,3}){3})"
-)
+SSH_INVALID_USER_RE = re.compile(r"Invalid user (?P<user>\S+) from (?P<ip>\S+)")
 # sshd: autenticación correcta
-SSH_OK_RE = re.compile(
-    r"Accepted (?:password|publickey) for (?P<user>\S+) "
-    r"from (?P<ip>\d{1,3}(?:\.\d{1,3}){3})"
-)
+SSH_OK_RE = re.compile(r"Accepted (?:password|publickey) for (?P<user>\S+) from (?P<ip>\S+)")
 # sshd: conexión cerrada, reiniciada o entrante
 SSH_CONN_RE = re.compile(
-    r"(?:Connection (?:closed|reset)|Received disconnect) (?:by|from) "
-    r"(?P<ip>\d{1,3}(?:\.\d{1,3}){3})"
+    r"(?:Connection (?:closed|reset)|Received disconnect) (?:by|from) (?P<ip>\S+)"
 )
 # Fallo de autenticación genérico en cualquier otro servicio (sudo, PAM, dovecot…)
 GENERIC_FAIL_RE = re.compile(
@@ -209,22 +209,50 @@ GENERIC_FAIL_RE = re.compile(
     r"invalid user|access denied|permission denied|login failed|incorrect password",
     re.I,
 )
-# Extractor de IP de reserva
-IP_RE = re.compile(r"\b(?P<ip>\d{1,3}(?:\.\d{1,3}){3})\b")
+# Racha de caracteres que *podría* ser una dirección IP. A propósito permisivo:
+# quien decide de verdad es `_parse_ip()` con el módulo `ipaddress`.
+IP_CANDIDATE_RE = re.compile(r"[0-9A-Fa-f.:]{2,45}")
 # Puerto de origen ("… port 51001 ssh2")
 PORT_RE = re.compile(r"\bport\s+(?P<port>\d{1,5})\b", re.I)
 
 MONTHS = {
     m: i
     for i, m in enumerate(
-        ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-         "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+        ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
         start=1,
     )
 }
 
 
-def _extract_port(text: str) -> Optional[int]:
+def _parse_ip(texto: str | None) -> str | None:
+    """Valida un token y devuelve la dirección IP en forma canónica.
+
+    Acepta IPv4 e IPv6, incluidas la forma comprimida (`2001:db8::1`), la
+    notación entre corchetes y el identificador de zona (`fe80::1%eth0`).
+    Devuelve `None` si el token no es una dirección válida.
+    """
+    if not texto:
+        return None
+    candidato = texto.strip().strip("[]").split("%", 1)[0]
+    # Un candidato puede arrastrar puntuación de la frase ("desde 10.0.0.1.").
+    for intento in (candidato, candidato.rstrip("."), candidato.rstrip(".:")):
+        try:
+            return str(ipaddress.ip_address(intento))
+        except ValueError:
+            continue
+    return None
+
+
+def _find_ip(texto: str) -> str | None:
+    """Devuelve la primera dirección IP válida que aparezca en el texto."""
+    for coincidencia in IP_CANDIDATE_RE.finditer(texto):
+        ip = _parse_ip(coincidencia.group(0))
+        if ip is not None:
+            return ip
+    return None
+
+
+def _extract_port(text: str) -> int | None:
     """Devuelve el puerto que aparezca en el texto, o `None`."""
     m = PORT_RE.search(text)
     if not m:
@@ -263,7 +291,7 @@ class SyslogParser:
         #: Momento de referencia para deducir el año (útil en los tests).
         self.reference = reference
 
-    def __call__(self, line: str) -> Optional[Event]:
+    def __call__(self, line: str) -> Event | None:
         """Analiza una línea y devuelve el evento, o `None` si no es útil."""
         line = line.rstrip("\n")
         if not line.strip():
@@ -278,8 +306,7 @@ class SyslogParser:
         kind, usuario, ip, texto = self._classify(proceso, mensaje)
 
         if ip is None:
-            encontrada = IP_RE.search(mensaje)
-            ip = encontrada["ip"] if encontrada else None
+            ip = _find_ip(mensaje)
 
         # Sin IP de origen no se puede correlacionar: el evento se descarta en
         # lugar de agruparlo bajo una IP ficticia junto a eventos ajenos.
@@ -308,7 +335,7 @@ class SyslogParser:
 
     def _classify(
         self, proceso: str, mensaje: str
-    ) -> tuple[EventKind, Optional[str], Optional[str], str]:
+    ) -> tuple[EventKind, str | None, str | None, str]:
         """Determina tipo, usuario, IP y texto legible de un mensaje."""
         if "sshd" in proceso.lower():
             fallo = SSH_FAIL_RE.search(mensaje)
@@ -316,7 +343,7 @@ class SyslogParser:
                 return (
                     EventKind.AUTH_FAILURE,
                     fallo["user"],
-                    fallo["ip"],
+                    _parse_ip(fallo["ip"]),
                     f"Fallo de autenticación SSH para el usuario «{fallo['user']}»",
                 )
 
@@ -325,7 +352,7 @@ class SyslogParser:
                 return (
                     EventKind.AUTH_FAILURE,
                     invalido["user"],
-                    invalido["ip"],
+                    _parse_ip(invalido["ip"]),
                     f"Intento SSH contra el usuario inexistente «{invalido['user']}»",
                 )
 
@@ -334,17 +361,18 @@ class SyslogParser:
                 return (
                     EventKind.AUTH_SUCCESS,
                     correcto["user"],
-                    correcto["ip"],
+                    _parse_ip(correcto["ip"]),
                     f"Autenticación SSH correcta para el usuario «{correcto['user']}»",
                 )
 
             conexion = SSH_CONN_RE.search(mensaje)
             if conexion:
+                origen = _parse_ip(conexion["ip"])
                 return (
                     EventKind.CONNECTION,
                     None,
-                    conexion["ip"],
-                    f"Conexión SSH cerrada desde {conexion['ip']}",
+                    origen,
+                    f"Conexión SSH cerrada desde {origen}",
                 )
 
         if GENERIC_FAIL_RE.search(mensaje):
@@ -352,19 +380,19 @@ class SyslogParser:
 
         return (EventKind.OTHER, None, None, mensaje)
 
-    def _parse_unstructured(self, line: str) -> Optional[Event]:
+    def _parse_unstructured(self, line: str) -> Event | None:
         """Rescata una IP de una línea que no sigue el formato syslog.
 
         Al no haber marca de tiempo fiable se usa la hora actual, y el evento
         se marca como `OTHER` salvo que el texto delate un fallo de acceso.
         """
-        encontrada = IP_RE.search(line)
-        if not encontrada:
+        encontrada = _find_ip(line)
+        if encontrada is None:
             return None
         kind = EventKind.AUTH_FAILURE if GENERIC_FAIL_RE.search(line) else EventKind.OTHER
         return Event(
             timestamp=datetime.now(self.tz),
-            source_ip=encontrada["ip"],
+            source_ip=encontrada,
             username=None,
             message=line,
             raw=line,
@@ -409,16 +437,14 @@ class Detector:
     #: Cada cuántos eventos se liberan las IPs inactivas.
     _GC_EVERY = 1000
 
-    def __init__(
-        self, window_seconds: int | None = None, threshold: int | None = None
-    ) -> None:
+    def __init__(self, window_seconds: int | None = None, threshold: int | None = None) -> None:
         if window_seconds is not None:
             self.window_seconds = window_seconds
         if threshold is not None:
             self.threshold = threshold
         self._buckets: dict[str, deque[Event]] = defaultdict(deque)
         self._clock: dict[str, datetime] = {}
-        self._latest: Optional[datetime] = None
+        self._latest: datetime | None = None
         self._seen = 0
 
     # -- API pública --------------------------------------------------------
@@ -430,7 +456,7 @@ class Detector:
         """
         return True
 
-    def feed(self, event: Event) -> Optional[Alert]:
+    def feed(self, event: Event) -> Alert | None:
         """Incorpora un evento y devuelve una alerta si se cruza el umbral."""
         if not self.matches(event):
             return None
@@ -440,7 +466,10 @@ class Detector:
 
         # Líneas desordenadas o con relojes distintos: si el evento es más
         # antiguo que la ventana ya cubierta para esa IP, queda fuera.
-        if anterior is not None and (anterior - event.timestamp).total_seconds() > self.window_seconds:
+        if (
+            anterior is not None
+            and (anterior - event.timestamp).total_seconds() > self.window_seconds
+        ):
             return None
 
         ahora = event.timestamp if anterior is None or event.timestamp > anterior else anterior
@@ -484,7 +513,7 @@ class Detector:
     def _forget(self, ip: str) -> None:
         """Punto de extensión para que las subclases liberen su estado propio."""
 
-    def _evaluate(self, event: Event, ahora: datetime) -> Optional[Alert]:
+    def _evaluate(self, event: Event, ahora: datetime) -> Alert | None:
         """Decide si el estado actual justifica una alerta."""
         return None
 
@@ -501,7 +530,7 @@ class SSHBruteForceDetector(Detector):
     def matches(self, event: Event) -> bool:
         return event.kind is EventKind.AUTH_FAILURE and "sshd" in event.facility.lower()
 
-    def _evaluate(self, event: Event, ahora: datetime) -> Optional[Alert]:
+    def _evaluate(self, event: Event, ahora: datetime) -> Alert | None:
         bucket = self._buckets[event.source_ip]
         if len(bucket) < self.threshold:
             return None
@@ -548,7 +577,7 @@ class PortScanDetector(Detector):
     def _forget(self, ip: str) -> None:
         self._ports.pop(ip, None)
 
-    def _evaluate(self, event: Event, ahora: datetime) -> Optional[Alert]:
+    def _evaluate(self, event: Event, ahora: datetime) -> Alert | None:
         serie = self._ports[event.source_ip]
         serie.append((event.timestamp, event.port))  # type: ignore[arg-type]
         while serie and (ahora - serie[0][0]).total_seconds() > self.window_seconds:
@@ -588,7 +617,7 @@ class AuthFailStormDetector(Detector):
     def matches(self, event: Event) -> bool:
         return event.kind is EventKind.AUTH_FAILURE
 
-    def _evaluate(self, event: Event, ahora: datetime) -> Optional[Alert]:
+    def _evaluate(self, event: Event, ahora: datetime) -> Alert | None:
         bucket = self._buckets[event.source_ip]
         if len(bucket) < self.threshold:
             return None
@@ -607,6 +636,40 @@ class AuthFailStormDetector(Detector):
             events=list(bucket),
             timestamp=event.timestamp,
         )
+
+
+class Allowlist:
+    """Conjunto de orígenes que nunca deben generar alertas.
+
+    Acepta direcciones sueltas y redes en notación CIDR, de ambas familias:
+    `10.0.0.5`, `192.168.0.0/16`, `2001:db8::/32`. Sin una lista así, la VPN
+    del equipo, el servidor de integración continua o el propio sistema de
+    monitorización acaban apareciendo como atacantes.
+    """
+
+    def __init__(self, entradas: Iterable[str] = ()) -> None:
+        self.networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+        for entrada in entradas:
+            for parte in str(entrada).split(","):
+                parte = parte.strip()
+                if parte:
+                    self.networks.append(ipaddress.ip_network(parte, strict=False))
+
+    def __contains__(self, ip: str) -> bool:
+        try:
+            direccion = ipaddress.ip_address(ip)
+        except ValueError:
+            return False
+        return any(direccion in red for red in self.networks if red.version == direccion.version)
+
+    def __bool__(self) -> bool:
+        return bool(self.networks)
+
+    def __len__(self) -> int:
+        return len(self.networks)
+
+    def __repr__(self) -> str:  # pragma: no cover - ayuda al depurar
+        return f"Allowlist({[str(r) for r in self.networks]!r})"
 
 
 #: Detectores activados por defecto.
@@ -681,6 +744,54 @@ class CSVSink(AlertSink):
             self._fp.close()
 
 
+class WebhookSink(AlertSink):
+    """Envía cada alerta por HTTP POST en formato JSON.
+
+    Sirve para Slack, Discord, Microsoft Teams o cualquier receptor genérico:
+    además de la alerta completa, el cuerpo incluye un campo `text` con el
+    resumen, que es lo que esas plataformas muestran por defecto.
+
+    Un webhook caído nunca interrumpe el análisis: el fallo se registra como
+    aviso y el motor sigue procesando.
+    """
+
+    #: Eventos de contexto que se envían como mucho, para no disparar el tamaño.
+    MAX_EVENTOS = 5
+
+    def __init__(self, url: str, timeout: float = 5.0) -> None:
+        esquema = urllib.parse.urlparse(url).scheme.lower()
+        if esquema not in ("http", "https"):
+            raise ValueError(f"el webhook debe ser http o https, no «{esquema or url}»")
+        self.url = url
+        self.timeout = timeout
+        #: Número de envíos fallidos, expuesto para diagnóstico.
+        self.failures = 0
+
+    def _payload(self, alert: Alert) -> bytes:
+        datos = alert.to_dict()
+        datos["events"] = datos["events"][: self.MAX_EVENTOS]
+        datos["event_count"] = len(alert.events)
+        datos["text"] = f"[{alert.severity.value.upper()}] {alert.title} — {alert.description}"
+        return json.dumps(datos, ensure_ascii=False).encode("utf-8")
+
+    def emit(self, alert: Alert) -> None:
+        peticion = urllib.request.Request(
+            self.url,
+            data=self._payload(alert),
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": f"soc-monitor/{__version__}",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(peticion, timeout=self.timeout) as respuesta:
+                respuesta.read(1)
+        except (urllib.error.URLError, OSError) as error:
+            self.failures += 1
+            LOG.warning("no se pudo enviar la alerta al webhook: %s", error)
+
+
 class StdoutSink(AlertSink):
     """Salida por consola, con color sólo cuando el destino es un terminal."""
 
@@ -733,9 +844,10 @@ class SOCEngine:
         self,
         detectors: Iterable[Detector] | None = None,
         sinks: Iterable[AlertSink] | None = None,
-        parser: Callable[[str], Optional[Event]] | None = None,
+        parser: Callable[[str], Event | None] | None = None,
         cooldown_seconds: int = COOLDOWN_SECONDS,
         min_severity: Severity | str = Severity.INFO,
+        allowlist: Allowlist | Iterable[str] | None = None,
     ) -> None:
         self.detectors: list[Detector] = (
             list(detectors) if detectors is not None else [d() for d in DETECTORS]
@@ -746,7 +858,11 @@ class SOCEngine:
         #: Segundos de silencio por (detector, IP). 0 desactiva el silenciamiento.
         self.cooldown_seconds = cooldown_seconds
         self.min_severity = Severity.coerce(min_severity)
-        self.stats = {"lines": 0, "events": 0, "alerts": 0, "suppressed": 0}
+        #: Orígenes de confianza, que se descartan antes de llegar a los detectores.
+        self.allowlist = (
+            allowlist if isinstance(allowlist, Allowlist) else Allowlist(allowlist or ())
+        )
+        self.stats = {"lines": 0, "events": 0, "alerts": 0, "suppressed": 0, "allowed": 0}
         self._fired: dict[tuple[str, str], datetime] = {}
 
     # -- procesamiento ------------------------------------------------------
@@ -757,6 +873,12 @@ class SOCEngine:
         if event is None:
             return []
         self.stats["events"] += 1
+
+        # Los orígenes de confianza no llegan a los detectores: así tampoco
+        # ocupan sitio en las ventanas ni gastan memoria.
+        if self.allowlist and event.source_ip in self.allowlist:
+            self.stats["allowed"] += 1
+            return []
 
         emitidas: list[Alert] = []
         for detector in self.detectors:
@@ -878,10 +1000,13 @@ class SOCEngine:
     def summary(self) -> str:
         """Resumen de una línea con las estadísticas del análisis."""
         s = self.stats
-        return (
+        resumen = (
             f"líneas={s['lines']} · eventos={s['events']} · "
             f"alertas={s['alerts']} · silenciadas={s['suppressed']}"
         )
+        if s["allowed"]:
+            resumen += f" · de confianza={s['allowed']}"
+        return resumen
 
 
 # ---------------------------------------------------------------------------
@@ -907,7 +1032,10 @@ def demo_lines() -> Iterable[str]:
     for i, usuario in enumerate(usuarios):
         invalido = "invalid user " if usuario not in ("root", "admin") else ""
         escenario.append(
-            sshd(i * 2, f"Failed password for {invalido}{usuario} from {ATACANTE} port 51{i:03d} ssh2")
+            sshd(
+                i * 2,
+                f"Failed password for {invalido}{usuario} from {ATACANTE} port 51{i:03d} ssh2",
+            )
         )
 
     # 2) Tráfico legítimo intercalado: no debe generar ninguna alerta.
@@ -945,22 +1073,46 @@ def _build_sinks(args: argparse.Namespace) -> list[AlertSink]:
         sinks.append(JSONSink(Path(args.json)))
     if args.csv:
         sinks.append(CSVSink(Path(args.csv)))
+    if args.webhook:
+        sinks.append(WebhookSink(args.webhook))
     if not args.silencioso:
         sinks.append(StdoutSink(color=False if args.sin_color else None))
     return sinks
 
 
+def _stdin_lines() -> Iterable[str]:
+    """Recorre la entrada estándar línea a línea, sin esperar a llenar el búfer.
+
+    Es lo que permite encadenar `journalctl -f | soc-monitor analizar -` y ver
+    las alertas en el momento, en lugar de a bloques de varios kilobytes.
+    """
+    return iter(sys.stdin.readline, "")
+
+
 def cmd_analizar(args: argparse.Namespace) -> int:
     """Subcomando `analizar`: procesa un fichero de log o el escenario de demo."""
     if not args.demo and not args.fichero:
-        args._parser.error("indica la ruta de un fichero de log o usa --demo")
+        args._parser.error(
+            "indica la ruta de un fichero de log, «-» para la entrada estándar, o usa --demo"
+        )
+
+    try:
+        allowlist = Allowlist(args.excluir)
+    except ValueError as error:
+        args._parser.error(f"--excluir: {error}")
+
+    try:
+        sinks = _build_sinks(args)
+    except ValueError as error:
+        args._parser.error(f"--webhook: {error}")
 
     parser = SyslogParser(tz=timezone.utc if args.utc else None)
     engine = SOCEngine(
-        sinks=_build_sinks(args),
+        sinks=sinks,
         parser=parser,
         cooldown_seconds=args.enfriamiento,
         min_severity=args.gravedad_minima,
+        allowlist=allowlist,
     )
 
     def _apagar(signum, _frame):
@@ -969,15 +1121,21 @@ def cmd_analizar(args: argparse.Namespace) -> int:
         sys.exit(0)
 
     signal.signal(signal.SIGINT, _apagar)
-    try:
+    # SIGTERM no existe en Windows y no se puede instalar desde un hilo secundario.
+    with contextlib.suppress(AttributeError, ValueError):
         signal.signal(signal.SIGTERM, _apagar)
-    except (AttributeError, ValueError):  # Windows o hilo secundario
-        pass
 
     try:
         if args.demo:
             engine.process(demo_lines())
             print(f"\n— fin del escenario de demostración · {engine.summary()}")
+            return 0
+
+        if args.fichero == "-":
+            if not args.silencioso:
+                print("📥 Leyendo de la entrada estándar…  (Ctrl+C para parar)\n")
+            engine.process(_stdin_lines())
+            print(f"\n— análisis completado · {engine.summary()}")
             return 0
 
         ruta = Path(args.fichero)
@@ -1025,36 +1183,72 @@ def build_parser() -> argparse.ArgumentParser:
         help="Analiza un fichero de log o un flujo en tiempo real",
         description="Analiza un log tipo syslog/auth.log y emite alertas.",
     )
-    analizar.add_argument("fichero", nargs="?", help="Ruta del fichero de log a analizar")
     analizar.add_argument(
-        "-s", "--seguir", "-f", "--follow", action="store_true",
+        "fichero",
+        nargs="?",
+        help="Ruta del fichero de log, o «-» para leer de la entrada estándar",
+    )
+    analizar.add_argument(
+        "-s",
+        "--seguir",
+        "-f",
+        "--follow",
+        action="store_true",
         help="Sigue el fichero en tiempo real (soporta rotación de logs)",
     )
     analizar.add_argument(
-        "--desde-inicio", action="store_true",
+        "--desde-inicio",
+        action="store_true",
         help="Con --seguir, procesa también el contenido ya existente",
     )
-    analizar.add_argument("--demo", action="store_true", help="Ejecuta un escenario de ataque de ejemplo")
+    analizar.add_argument(
+        "--demo", action="store_true", help="Ejecuta un escenario de ataque de ejemplo"
+    )
     analizar.add_argument("--json", metavar="RUTA", help="Añade las alertas a un fichero JSONL")
     analizar.add_argument("--csv", metavar="RUTA", help="Añade las alertas a un fichero CSV")
     analizar.add_argument(
-        "-q", "--silencioso", "--quiet", action="store_true",
+        "--webhook",
+        metavar="URL",
+        help="Envía cada alerta por HTTP POST (Slack, Discord, SIEM…)",
+    )
+    analizar.add_argument(
+        "--excluir",
+        metavar="ORIGEN",
+        action="append",
+        default=[],
+        help=(
+            "Origen de confianza que nunca genera alertas. Admite direcciones y "
+            "redes CIDR, IPv4 e IPv6 (10.0.0.0/8, 2001:db8::/32). Se puede "
+            "repetir o separar por comas"
+        ),
+    )
+    analizar.add_argument(
+        "-q",
+        "--silencioso",
+        "--quiet",
+        action="store_true",
         help="No escribe nada por consola (útil en tareas programadas)",
     )
     analizar.add_argument("--sin-color", action="store_true", help="Desactiva los colores")
     analizar.add_argument(
-        "--gravedad-minima", default="info",
+        "--gravedad-minima",
+        default="info",
         choices=[s.value for s in Severity],
         help="Descarta las alertas por debajo de esta gravedad (por defecto: info)",
     )
     analizar.add_argument(
-        "--enfriamiento", type=int, default=COOLDOWN_SECONDS, metavar="SEGUNDOS",
+        "--enfriamiento",
+        type=int,
+        default=COOLDOWN_SECONDS,
+        metavar="SEGUNDOS",
         help=(
             "Silencia cada pareja (detector, IP) durante N segundos tras alertar. "
             f"0 lo desactiva (por defecto: {COOLDOWN_SECONDS})"
         ),
     )
-    analizar.add_argument("--utc", action="store_true", help="Interpreta las marcas del log como UTC")
+    analizar.add_argument(
+        "--utc", action="store_true", help="Interpreta las marcas del log como UTC"
+    )
     analizar.set_defaults(func=cmd_analizar, _parser=analizar)
 
     detectores = sub.add_parser(
