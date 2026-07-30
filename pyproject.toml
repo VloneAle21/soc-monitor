@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "soc-monitor"
-version = "2.0.0"
+version = "2.1.0"
 description = "Centro de Operaciones de Seguridad ligero: detección de fuerza bruta, escaneo de puertos y fallos de autenticación sobre logs syslog/auth.log"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -46,3 +46,11 @@ py-modules = ["soc_monitor"]
 testpaths = ["."]
 python_files = ["test_*.py"]
 addopts = "-ra --strict-markers"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+ignore = ["E501"]  # la longitud la controla el formateador

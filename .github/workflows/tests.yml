@@ -7,6 +7,25 @@ on:
   workflow_dispatch:
 
 jobs:
+  lint:
+    name: Lint y formato
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar ruff
+        run: pip install ruff
+
+      - name: Comprobar reglas de estilo
+        run: ruff check .
+
+      - name: Comprobar formato
+        run: ruff format --check .
+
   test:
     name: Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
@@ -34,3 +53,25 @@ jobs:
 
       - name: Comprobar que el escenario de demostración funciona
         run: python soc_monitor.py analizar --demo --sin-color
+
+      - name: Comprobar que se instala y el ejecutable arranca
+        run: |
+          pip install .
+          soc-monitor --version
+          soc-monitor detectores
+
+  demo:
+    name: La demo del README está al día
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Regenerar docs/demo.svg y comprobar que no cambia
+        run: |
+          python tools/generar_demo.py
+          git diff --exit-code docs/demo.svg \
+            || (echo "::error::docs/demo.svg está desfasado — ejecuta 'python tools/generar_demo.py' y haz commit" && exit 1)
