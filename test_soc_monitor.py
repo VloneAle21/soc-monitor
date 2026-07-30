@@ -140,6 +140,27 @@ class TestParser:
         assert ev.kind is soc.EventKind.CONNECTION
         assert ev.port == 52001
 
+    @pytest.mark.parametrize(
+        "mensaje, usuario",
+        [
+            (
+                "Connection closed by authenticating user root 203.0.113.5 port 51001 [preauth]",
+                "root",
+            ),
+            ("Connection closed by invalid user admin 203.0.113.5 port 51002 [preauth]", "admin"),
+            ("Connection reset by 203.0.113.5 port 51003 [preauth]", None),
+            ("Received disconnect from 203.0.113.5 port 51004:11: Bye", None),
+        ],
+    )
+    def test_formas_de_cierre_de_conexion_de_sshd(self, parser, mensaje, usuario):
+        # sshd intercala el usuario antes de la dirección en varias de sus
+        # variantes; la IP debe salir bien en todas y el texto no debe decir "None".
+        ev = parser(f"Jul 29 12:00:00 srv01 sshd[1234]: {mensaje}")
+        assert ev.source_ip == ATACANTE
+        assert ev.kind is soc.EventKind.CONNECTION
+        assert ev.username == usuario
+        assert "None" not in ev.message
+
     def test_fallo_generico_en_otro_servicio(self, parser):
         ev = parser(
             "Jul 29 12:01:10 srv01 dovecot: auth-worker: pam(auth,203.0.113.5): "
@@ -247,6 +268,9 @@ class TestIPv6:
             ("10.0.0.99.", "10.0.0.99"),  # arrastra el punto de la frase
             ("no-es-una-ip", None),
             ("999.999.999.999", None),
+            # Una MAC de ocho grupos es una IPv6 válida a ojos de `ipaddress`.
+            ("ab:cd:ef:12:34:56:78:90", None),
+            ("ab:cd:ef:12:34:56", None),
             ("", None),
             (None, None),
         ],

@@ -199,9 +199,13 @@ SSH_FAIL_RE = re.compile(
 SSH_INVALID_USER_RE = re.compile(r"Invalid user (?P<user>\S+) from (?P<ip>\S+)")
 # sshd: autenticación correcta
 SSH_OK_RE = re.compile(r"Accepted (?:password|publickey) for (?P<user>\S+) from (?P<ip>\S+)")
-# sshd: conexión cerrada, reiniciada o entrante
+# sshd: conexión cerrada, reiniciada o entrante. Antes de la dirección puede
+# aparecer el usuario contra el que se estaba autenticando:
+#   Connection closed by authenticating user root 203.0.113.5 port 51001 [preauth]
+#   Connection closed by invalid user admin 203.0.113.5 port 51002 [preauth]
 SSH_CONN_RE = re.compile(
-    r"(?:Connection (?:closed|reset)|Received disconnect) (?:by|from) (?P<ip>\S+)"
+    r"(?:Connection (?:closed|reset)|Received disconnect) (?:by|from) "
+    r"(?:(?:authenticating|invalid) user (?P<user>\S+) )?(?P<ip>\S+)"
 )
 # Fallo de autenticación genérico en cualquier otro servicio (sudo, PAM, dovecot…)
 GENERIC_FAIL_RE = re.compile(
@@ -212,6 +216,11 @@ GENERIC_FAIL_RE = re.compile(
 # Racha de caracteres que *podría* ser una dirección IP. A propósito permisivo:
 # quien decide de verdad es `_parse_ip()` con el módulo `ipaddress`.
 IP_CANDIDATE_RE = re.compile(r"[0-9A-Fa-f.:]{2,45}")
+# Una MAC de ocho grupos (`ab:cd:ef:12:34:56:78:90`) es sintácticamente una IPv6
+# válida, así que `ipaddress` la acepta y colaría como origen de un evento. Se
+# reconoce porque todos sus grupos tienen exactamente dos dígitos, cosa que no
+# ocurre en las direcciones IPv6 que se escriben en la práctica.
+MAC_RE = re.compile(r"^(?:[0-9A-Fa-f]{2}:){5,7}[0-9A-Fa-f]{2}$")
 # Puerto de origen ("… port 51001 ssh2")
 PORT_RE = re.compile(r"\bport\s+(?P<port>\d{1,5})\b", re.I)
 
@@ -234,6 +243,8 @@ def _parse_ip(texto: str | None) -> str | None:
     if not texto:
         return None
     candidato = texto.strip().strip("[]").split("%", 1)[0]
+    if MAC_RE.match(candidato):
+        return None
     # Un candidato puede arrastrar puntuación de la frase ("desde 10.0.0.1.").
     for intento in (candidato, candidato.rstrip("."), candidato.rstrip(".:")):
         try:
@@ -368,11 +379,13 @@ class SyslogParser:
             conexion = SSH_CONN_RE.search(mensaje)
             if conexion:
                 origen = _parse_ip(conexion["ip"])
+                usuario = conexion["user"]
+                detalle = f" (usuario «{usuario}»)" if usuario else ""
                 return (
                     EventKind.CONNECTION,
-                    None,
+                    usuario,
                     origen,
-                    f"Conexión SSH cerrada desde {origen}",
+                    f"Conexión SSH cerrada{detalle}",
                 )
 
         if GENERIC_FAIL_RE.search(mensaje):
