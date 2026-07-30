@@ -34,7 +34,7 @@ Repositorio = "https://github.com/VloneAle21/soc-monitor"
 Incidencias = "https://github.com/VloneAle21/soc-monitor/issues"
 
 [project.optional-dependencies]
-dev = ["pytest>=7.4"]
+dev = ["pytest>=7.4,<9", "ruff==0.16.1"]
 
 [project.scripts]
 soc-monitor = "soc_monitor:main"

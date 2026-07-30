@@ -212,6 +212,7 @@ dirección queda siempre en forma canónica, así que `2001:0db8::0001` y
 ```python
 from soc_monitor import Detector, Event, Alert, EventKind, Severity, SOCEngine, StdoutSink
 
+
 class WebShellDetector(Detector):
     name = "web_shell"
     description = "Peticiones sospechosas a ficheros subidos"
@@ -236,6 +237,7 @@ class WebShellDetector(Detector):
             events=list(ventana),
             timestamp=event.timestamp,
         )
+
 
 engine = SOCEngine(detectors=[WebShellDetector()], sinks=[StdoutSink()])
 engine.process(open("/var/log/auth.log"))

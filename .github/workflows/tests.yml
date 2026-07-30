@@ -17,8 +17,11 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Instalar ruff
-        run: pip install ruff
+      # Se instala desde requirements-dev.txt para usar exactamente la misma
+      # versión de ruff que en local: sin fijarla, una release nueva rompe la
+      # CI sin que nadie haya tocado el código.
+      - name: Instalar herramientas de desarrollo
+        run: pip install -r requirements-dev.txt
 
       - name: Comprobar reglas de estilo
         run: ruff check .
