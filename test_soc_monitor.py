@@ -38,6 +38,35 @@ def parser():
     return soc.SyslogParser(tz=UTC, reference=datetime(2026, 8, 1, tzinfo=UTC))
 
 
+@pytest.fixture
+def servidor_webhook():
+    """Levanta un receptor HTTP local y devuelve (url, lista de alertas recibidas)."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    recibidas: list[dict] = []
+
+    class Receptor(BaseHTTPRequestHandler):
+        def do_POST(self):
+            cuerpo = self.rfile.read(int(self.headers["Content-Length"]))
+            recibidas.append(json.loads(cuerpo))
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"ok")
+
+        def log_message(self, *_):  # silencia el log del servidor de pruebas
+            pass
+
+    servidor = HTTPServer(("127.0.0.1", 0), Receptor)
+    hilo = threading.Thread(target=servidor.serve_forever, daemon=True)
+    hilo.start()
+    try:
+        yield f"http://127.0.0.1:{servidor.server_port}/hook", recibidas
+    finally:
+        servidor.shutdown()
+        servidor.server_close()
+
+
 def evento(
     segundos: int = 0,
     ip: str = ATACANTE,
@@ -140,6 +169,138 @@ class TestParser:
         assert soc._extract_port("port 99999") is None
         assert soc._extract_port("port 22") == 22
         assert soc._extract_port("sin puerto") is None
+
+
+class TestIPv6:
+    """Los ataques por IPv6 deben verse igual que los de IPv4."""
+
+    @pytest.mark.parametrize(
+        "linea, esperada",
+        [
+            (
+                "Jul 29 12:00:00 srv01 sshd[1234]: Failed password for root "
+                "from 2001:db8::dead:beef port 51001 ssh2",
+                "2001:db8::dead:beef",
+            ),
+            (
+                "Jul 29 12:00:00 srv01 sshd[1234]: Failed password for root from ::1 port 22 ssh2",
+                "::1",
+            ),
+            (
+                "Jul 29 12:00:00 srv01 sshd[1234]: Failed password for root "
+                "from ::ffff:203.0.113.5 port 22 ssh2",
+                "::ffff:203.0.113.5",
+            ),
+            # El identificador de zona se descarta al normalizar.
+            (
+                "Jul 29 12:00:00 srv01 sshd[1234]: Failed password for root "
+                "from fe80::1%eth0 port 22 ssh2",
+                "fe80::1",
+            ),
+            # Forma extendida: se guarda en forma canónica comprimida.
+            (
+                "Jul 29 12:00:00 srv01 sshd[1234]: Failed password for root "
+                "from 2001:0db8:0000:0000:0000:0000:0000:0001 port 22 ssh2",
+                "2001:db8::1",
+            ),
+        ],
+    )
+    def test_direcciones_ipv6_en_sshd(self, parser, linea, esperada):
+        ev = parser(linea)
+        assert ev is not None
+        assert ev.source_ip == esperada
+        assert ev.kind is soc.EventKind.AUTH_FAILURE
+
+    def test_ipv6_en_servicio_generico(self, parser):
+        ev = parser(
+            "Jul 29 12:01:10 srv01 dovecot: auth-worker: "
+            "pam(auth,2a00:1450:4003:80c::200e): authentication failure"
+        )
+        assert ev.source_ip == "2a00:1450:4003:80c::200e"
+        assert ev.kind is soc.EventKind.AUTH_FAILURE
+
+    def test_conexion_ipv6_conserva_el_puerto(self, parser):
+        ev = parser("Jul 29 12:00:20 srv01 sshd[1234]: Connection closed by 2001:db8::5 port 52001")
+        assert ev.source_ip == "2001:db8::5"
+        assert ev.port == 52001
+        assert ev.kind is soc.EventKind.CONNECTION
+
+    def test_fuerza_bruta_completa_por_ipv6(self):
+        motor = soc.SOCEngine(sinks=[])
+        lineas = [
+            f"Jul 29 12:00:{i:02d} srv01 sshd[1234]: Failed password for root "
+            f"from 2001:db8::bad port 51{i:03d} ssh2\n"
+            for i in range(6)
+        ]
+        assert motor.process(lineas) == 1
+
+    def test_una_hora_no_se_confunde_con_una_ip(self, parser):
+        # "12:00:00" tiene forma de IPv6 a ojos de un regex ingenuo.
+        assert soc._find_ip("Jul 29 12:00:00 texto sin direccion") is None
+        assert parser("Jul 29 12:00:00 srv01 sshd[1234]: Server listening on 0.0.0.0") is not None
+
+    @pytest.mark.parametrize(
+        "texto, esperada",
+        [
+            ("203.0.113.5", "203.0.113.5"),
+            ("[2001:db8::1]", "2001:db8::1"),
+            ("10.0.0.99.", "10.0.0.99"),  # arrastra el punto de la frase
+            ("no-es-una-ip", None),
+            ("999.999.999.999", None),
+            ("", None),
+            (None, None),
+        ],
+    )
+    def test_validacion_de_direcciones(self, texto, esperada):
+        assert soc._parse_ip(texto) == esperada
+
+
+class TestListaBlanca:
+    def test_direccion_suelta(self):
+        lista = soc.Allowlist(["10.0.0.5"])
+        assert "10.0.0.5" in lista
+        assert "10.0.0.6" not in lista
+
+    def test_red_cidr(self):
+        lista = soc.Allowlist(["192.168.0.0/16"])
+        assert "192.168.44.7" in lista
+        assert "192.169.0.1" not in lista
+
+    def test_cidr_ipv6(self):
+        lista = soc.Allowlist(["2001:db8::/32"])
+        assert "2001:db8::dead" in lista
+        assert "2001:db9::dead" not in lista
+
+    def test_familias_mezcladas_no_se_cruzan(self):
+        lista = soc.Allowlist(["10.0.0.0/8", "2001:db8::/32"])
+        assert "10.1.2.3" in lista
+        assert "2001:db8::1" in lista
+        assert "203.0.113.5" not in lista
+
+    def test_varias_entradas_separadas_por_comas(self):
+        lista = soc.Allowlist(["10.0.0.0/8, 172.16.0.0/12"])
+        assert len(lista) == 2
+        assert "172.16.5.5" in lista
+
+    def test_entrada_invalida_falla_pronto(self):
+        with pytest.raises(ValueError):
+            soc.Allowlist(["no-es-una-red"])
+
+    def test_lista_vacia_no_excluye_nada(self):
+        assert not soc.Allowlist([])
+        assert "10.0.0.1" not in soc.Allowlist([])
+
+    def test_el_motor_no_alerta_de_un_origen_de_confianza(self):
+        motor = soc.SOCEngine(sinks=[], allowlist=["203.0.113.0/24"])
+        assert motor.process(soc.demo_lines()) == 0
+        assert motor.stats["allowed"] > 0
+
+    def test_el_origen_de_confianza_no_ocupa_memoria(self):
+        motor = soc.SOCEngine(sinks=[], allowlist=["203.0.113.0/24"])
+        motor.process(soc.demo_lines())
+        # Ni siquiera llega a los detectores, así que no hay ventana para esa IP.
+        for detector in motor.detectors:
+            assert detector.window("203.0.113.5") == []
 
 
 class TestMarcasDeTiempo:
@@ -287,9 +448,7 @@ class TestTormentaAutenticacion:
 
     def test_ignora_autenticaciones_correctas(self):
         det = soc.AuthFailStormDetector(threshold=3)
-        eventos = [
-            evento(segundos=i, kind=soc.EventKind.AUTH_SUCCESS) for i in range(10)
-        ]
+        eventos = [evento(segundos=i, kind=soc.EventKind.AUTH_SUCCESS) for i in range(10)]
         assert alimentar(det, eventos) == []
 
 
@@ -302,9 +461,7 @@ class TestMotor:
     def test_el_escenario_de_demo_genera_las_tres_alertas(self):
         motor = soc.SOCEngine(sinks=[])
         emitidos = {
-            alerta.detector
-            for linea in soc.demo_lines()
-            for alerta in motor._process_line(linea)
+            alerta.detector for linea in soc.demo_lines() for alerta in motor._process_line(linea)
         }
         assert emitidos == {"ssh_fuerza_bruta", "escaneo_puertos", "tormenta_autenticacion"}
 
@@ -363,8 +520,38 @@ class TestSinks:
 
         lineas = destino.read_text(encoding="utf-8").strip().splitlines()
         assert lineas[0].startswith("timestamp,detector")
-        assert sum(1 for l in lineas if l.startswith("timestamp,")) == 1
+        assert sum(1 for linea in lineas if linea.startswith("timestamp,")) == 1
         assert len(lineas) == 1 + 6  # cabecera + 3 alertas × 2 ejecuciones
+
+    def test_webhook_envia_las_alertas(self, servidor_webhook):
+        url, recibidas = servidor_webhook
+        sink = soc.WebhookSink(url)
+        motor = soc.SOCEngine(sinks=[sink])
+        motor.process(soc.demo_lines())
+
+        assert len(recibidas) == 3
+        assert sink.failures == 0
+        assert recibidas[0]["text"].startswith("[ALTA] Fuerza bruta SSH")
+        assert recibidas[0]["detector"] == "ssh_fuerza_bruta"
+
+    def test_webhook_recorta_los_eventos_de_contexto(self, servidor_webhook):
+        url, recibidas = servidor_webhook
+        motor = soc.SOCEngine(sinks=[soc.WebhookSink(url)])
+        motor.process(soc.demo_lines())
+        for alerta in recibidas:
+            assert len(alerta["events"]) <= soc.WebhookSink.MAX_EVENTOS
+            assert alerta["event_count"] >= len(alerta["events"])
+
+    def test_webhook_caido_no_tumba_el_motor(self):
+        sink = soc.WebhookSink("http://127.0.0.1:1/no-existe", timeout=0.2)
+        motor = soc.SOCEngine(sinks=[sink])
+        assert motor.process(soc.demo_lines()) == 3
+        assert sink.failures == 3
+
+    @pytest.mark.parametrize("url", ["file:///etc/passwd", "ftp://host/x", "/ruta/local"])
+    def test_webhook_rechaza_esquemas_no_http(self, url):
+        with pytest.raises(ValueError):
+            soc.WebhookSink(url)
 
     def test_consola_sin_color_al_redirigir(self, tmp_path):
         destino = tmp_path / "salida.txt"
@@ -410,6 +597,33 @@ class TestCLI:
         for nombre in ("ssh_fuerza_bruta", "escaneo_puertos", "tormenta_autenticacion"):
             assert nombre in salida
 
+    def test_lee_de_la_entrada_estandar(self, capsys, monkeypatch):
+        import io
+
+        monkeypatch.setattr(soc.sys, "stdin", io.StringIO("".join(soc.demo_lines())))
+        assert soc.main(["analizar", "-", "--sin-color"]) == 0
+        salida = capsys.readouterr().out
+        assert "entrada estándar" in salida
+        assert "Fuerza bruta SSH" in salida
+
+    def test_excluir_acepta_cidr(self, capsys):
+        assert soc.main(["analizar", "--demo", "--excluir", "203.0.113.0/24", "--sin-color"]) == 0
+        salida = capsys.readouterr().out
+        assert "Fuerza bruta SSH" not in salida
+        assert "de confianza=" in salida
+
+    def test_excluir_invalido_falla_con_mensaje_claro(self, capsys):
+        with pytest.raises(SystemExit) as exc:
+            soc.main(["analizar", "--demo", "--excluir", "no-es-una-red"])
+        assert exc.value.code == 2
+        assert "--excluir" in capsys.readouterr().err
+
+    def test_webhook_invalido_falla_con_mensaje_claro(self, capsys):
+        with pytest.raises(SystemExit) as exc:
+            soc.main(["analizar", "--demo", "--webhook", "file:///etc/passwd"])
+        assert exc.value.code == 2
+        assert "--webhook" in capsys.readouterr().err
+
     def test_analiza_el_log_de_ejemplo(self, capsys):
         assert soc.main(["analizar", str(HERE / "sample_auth.log"), "--sin-color"]) == 0
         assert "análisis completado" in capsys.readouterr().out
@@ -430,10 +644,7 @@ class TestRegresiones:
         anunciaba «5 intentos fallidos».
         """
         det = soc.SSHBruteForceDetector(threshold=5)
-        ruido = [
-            evento(segundos=i, kind=soc.EventKind.CONNECTION, usuario=None)
-            for i in range(4)
-        ]
+        ruido = [evento(segundos=i, kind=soc.EventKind.CONNECTION, usuario=None) for i in range(4)]
         alertas = alimentar(det, ruido + [evento(segundos=5)])
         assert alertas == []
         assert len(det.window(ATACANTE)) == 1
@@ -450,14 +661,22 @@ class TestRegresiones:
 
         # Dentro del periodo de silencio: se descarta.
         repetida = soc.Alert(
-            primera[0].detector, soc.Severity.HIGH, "t", "d", ATACANTE,
+            primera[0].detector,
+            soc.Severity.HIGH,
+            "t",
+            "d",
+            ATACANTE,
             timestamp=primera[0].timestamp + timedelta(seconds=60),
         )
         assert motor._silenced(repetida)
 
         # Pasado el periodo: vuelve a alertar.
         tardia = soc.Alert(
-            primera[0].detector, soc.Severity.HIGH, "t", "d", ATACANTE,
+            primera[0].detector,
+            soc.Severity.HIGH,
+            "t",
+            "d",
+            ATACANTE,
             timestamp=primera[0].timestamp + timedelta(seconds=301),
         )
         assert not motor._silenced(tardia)
@@ -467,7 +686,7 @@ class TestRegresiones:
         motor = soc.SOCEngine(sinks=[], cooldown_seconds=60)
         assert motor.process(soc.demo_lines()) == 3
         # El mismo escenario una hora después vuelve a generar alertas.
-        mas_tarde = [l.replace("Jul 29 12:", "Jul 29 13:") for l in soc.demo_lines()]
+        mas_tarde = [ln.replace("Jul 29 12:", "Jul 29 13:") for ln in soc.demo_lines()]
         assert motor.process(mas_tarde) == 3
 
     def test_los_puertos_respetan_la_ventana_temporal(self):
