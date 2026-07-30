@@ -1,0 +1,56 @@
+# Unidad systemd para vigilar auth.log de forma continua.
+#
+#   sudo cp deploy/soc-monitor.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now soc-monitor
+#   journalctl -u soc-monitor -f
+#
+# Ajusta la lista de --excluir a tus redes de confianza antes de activarla.
+
+[Unit]
+Description=SOC Monitor — vigilancia de autenticación
+Documentation=https://github.com/VloneAle21/soc-monitor
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/soc-monitor analizar /var/log/auth.log \
+    --seguir \
+    --gravedad-minima media \
+    --enfriamiento 900 \
+    --excluir 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16 \
+    --json /var/log/soc-monitor/alertas.jsonl \
+    --sin-color
+
+Restart=always
+RestartSec=5
+
+# Necesita leer auth.log, que suele pertenecer al grupo adm.
+User=soc-monitor
+Group=adm
+SupplementaryGroups=systemd-journal
+
+# La salida va al journal; el fichero JSONL queda como registro persistente.
+StandardOutput=journal
+StandardError=journal
+
+# Endurecimiento: el proceso sólo necesita leer un log y escribir un fichero.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+ReadWritePaths=/var/log/soc-monitor
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target
