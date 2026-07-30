@@ -1,11 +1,14 @@
+Jul 29 11:59:40 srv01 sshd[1180]: Accepted publickey for deploy from 198.51.100.7 port 49812 ssh2
+Jul 29 11:59:41 srv01 systemd-logind: New session 44 of user deploy.
 Jul 29 12:00:00 srv01 sshd[1234]: Failed password for root from 203.0.113.5 port 51001 ssh2
 Jul 29 12:00:02 srv01 sshd[1234]: Failed password for root from 203.0.113.5 port 51002 ssh2
 Jul 29 12:00:04 srv01 sshd[1234]: Failed password for invalid user admin from 203.0.113.5 port 51003 ssh2
 Jul 29 12:00:06 srv01 sshd[1234]: Failed password for invalid user admin from 203.0.113.5 port 51004 ssh2
 Jul 29 12:00:08 srv01 sshd[1234]: Failed password for invalid user test from 203.0.113.5 port 51005 ssh2
 Jul 29 12:00:10 srv01 sshd[1234]: Failed password for root from 203.0.113.5 port 51006 ssh2
-Jul 29 12:00:12 srv01 sshd[1234]: Failed password for root from 203.0.113.5 port 51007 ssh2
+Jul 29 12:00:12 srv01 sshd[1234]: Invalid user oracle from 203.0.113.5 port 51007
 Jul 29 12:00:14 srv01 sshd[1234]: Accepted password for admin from 198.51.100.7 port 51022 ssh2
+Jul 29 12:00:16 srv01 sshd[1234]: Connection closed by 198.51.100.7 port 51022
 Jul 29 12:00:20 srv01 sshd[1234]: Connection closed by 203.0.113.5 port 52001
 Jul 29 12:00:21 srv01 sshd[1234]: Connection closed by 203.0.113.5 port 52002
 Jul 29 12:00:22 srv01 sshd[1234]: Connection closed by 203.0.113.5 port 52003
@@ -17,7 +20,9 @@ Jul 29 12:00:27 srv01 sshd[1234]: Connection closed by 203.0.113.5 port 52008
 Jul 29 12:00:28 srv01 sshd[1234]: Connection closed by 203.0.113.5 port 52009
 Jul 29 12:00:29 srv01 sshd[1234]: Connection closed by 203.0.113.5 port 52010
 Jul 29 12:00:30 srv01 sshd[1234]: Connection closed by 203.0.113.5 port 52011
-Jul 29 12:01:00 srv01 sudo: admin : TTY=pts/0 ; authentication failure ; user=root
-Jul 29 12:01:05 srv01 sudo: admin : TTY=pts/0 ; authentication failure ; user=root
+Jul 29 12:00:45 srv01 CRON[1301]: pam_unix(cron:session): session opened for user root
+Jul 29 12:01:00 srv01 sudo: admin : TTY=pts/0 ; PWD=/home/admin ; USER=root ; COMMAND=/usr/bin/apt update
 Jul 29 12:01:10 srv01 dovecot: auth-worker: pam(auth,203.0.113.5): authentication failure
 Jul 29 12:01:12 srv01 dovecot: auth-worker: pam(auth,203.0.113.5): authentication failure
+Jul 29 12:01:18 srv01 vsftpd: pam_unix(vsftpd:auth): authentication failure; rhost=203.0.113.5 user=ftp
+Jul 29 12:02:30 srv01 sshd[1410]: Accepted publickey for deploy from 198.51.100.7 port 49930 ssh2

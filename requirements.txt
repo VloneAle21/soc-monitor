@@ -1,2 +1,4 @@
-# No third-party runtime dependencies — soc-monitor uses only the
-# Python standard library. Python 3.10+ required.
+# SOC Monitor no tiene dependencias externas en tiempo de ejecución:
+# funciona únicamente con la librería estándar de Python 3.10 o superior.
+#
+# Para desarrollar o ejecutar las pruebas:  pip install -r requirements-dev.txt
