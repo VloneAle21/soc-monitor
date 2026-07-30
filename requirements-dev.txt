@@ -1,3 +1,7 @@
 # Dependencias necesarias sólo para desarrollar y ejecutar las pruebas.
 # La herramienta en sí no necesita nada fuera de la librería estándar.
-pytest>=7.4
+#
+# Las versiones van fijadas a propósito: un linter sin fijar hace que una
+# release nueva rompa la integración continua sin haber tocado el código.
+pytest>=7.4,<9
+ruff==0.16.1
