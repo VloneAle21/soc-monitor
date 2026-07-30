@@ -4,6 +4,46 @@ Todos los cambios relevantes del proyecto se documentan en este fichero.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/)
 y el versionado se ajusta a [SemVer](https://semver.org/lang/es/).
 
+## [2.1.0] — 2026-07-30
+
+De «correcta» a «desplegable». La 2.0.0 arregló la lógica de detección; esta
+versión cubre los huecos que impedían usarla de verdad en un servidor.
+
+### Añadido
+
+- **Soporte de IPv6.** Hasta ahora los regex eran sólo IPv4, así que un ataque
+  desde `2001:db8::dead:beef` se descartaba **en silencio**: en cualquier
+  máquina con IPv6 activado esos intentos sencillamente no existían. Se
+  reconocen la forma comprimida, las direcciones IPv4 mapeadas
+  (`::ffff:203.0.113.5`) y el identificador de zona (`fe80::1%eth0`).
+  La validación la hace `ipaddress`, no un regex, así que las direcciones se
+  guardan en forma canónica y `2001:0db8::0001` correlaciona con `2001:db8::1`.
+- **Lista blanca `--excluir`**, con direcciones sueltas y redes CIDR de ambas
+  familias. Sin ella, la VPN del equipo o el servidor de integración continua
+  aparecen como atacantes. Los orígenes de confianza se descartan antes de
+  llegar a los detectores, así que tampoco consumen memoria.
+- **Entrada estándar.** `journalctl -u ssh -f | soc-monitor analizar -` ya
+  funciona, leyendo línea a línea para que las alertas salgan en el momento.
+  En distribuciones con systemd puro puede no existir `auth.log`.
+- **Salida por webhook** (`--webhook`), compatible con Slack, Discord, Teams y
+  receptores genéricos. Sólo acepta `http`/`https`, recorta los eventos de
+  contexto y, si el destino está caído, registra un aviso sin interrumpir el
+  análisis.
+- **Unidad systemd** endurecida en `deploy/soc-monitor.service`.
+- **Animación de terminal** en el README, generada por `tools/generar_demo.py`
+  a partir de la salida real de la herramienta. La CI la regenera y falla si se
+  ha quedado desfasada, de modo que la imagen no puede mentir.
+- **Lint y formato con ruff**, comprobados en CI, más verificación de que el
+  paquete se instala y el ejecutable arranca.
+- 35 pruebas nuevas (87 en total).
+
+### Decisión consciente
+
+No se persiste el estado entre reinicios. Las ventanas duran entre 30 y 120
+segundos, así que un reinicio cuesta como mucho dos minutos de contexto;
+guardarlo supondría un fichero de estado con su corrupción y su migración a
+cambio de muy poco.
+
 ## [2.0.0] — 2026-07-30
 
 Revisión completa de la lógica de detección. Los recuentos que aparecían en las

@@ -8,10 +8,16 @@
 [![Python](https://img.shields.io/badge/Python-3.10%20%E2%80%93%203.13-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![Licencia MIT](https://img.shields.io/badge/Licencia-MIT-1f6feb?style=flat-square&logo=opensourceinitiative&logoColor=white)](LICENSE)
 [![Sin dependencias](https://img.shields.io/badge/Dependencias-Ninguna-00d4aa?style=flat-square&logo=python&logoColor=white)](requirements.txt)
+[![Ruff](https://img.shields.io/badge/estilo-ruff-261230?style=flat-square&logo=ruff&logoColor=white)](https://docs.astral.sh/ruff/)
 [![Estrellas](https://img.shields.io/github/stars/VloneAle21/soc-monitor?style=flat-square&logo=github&color=yellow)](https://github.com/VloneAle21/soc-monitor/stargazers)
 
 **Detección de fuerza bruta, escaneo de puertos y fallos de autenticación sobre `syslog` / `auth.log`.**
-Un solo fichero, cero dependencias, pensado para leerse y ampliarse.
+Un solo fichero, cero dependencias, IPv4 e IPv6.
+
+<img src="docs/demo.svg" width="100%" alt="SOC Monitor detectando un ataque en tiempo real"/>
+
+<sub>La animación se genera con `tools/generar_demo.py` a partir de la salida real de la herramienta,
+y la CI falla si se queda desfasada.</sub>
 
 </div>
 
@@ -29,8 +35,8 @@ cruza un umbral dentro de una ventana de tiempo:
 | `escaneo_puertos` | Conexiones a muchos puertos distintos desde un mismo origen | 30 s | 10 | media |
 | `tormenta_autenticacion` | Fallos de autenticación agrupados entre varios servicios | 120 s | 8 | media / alta |
 
-Funciona sobre `/var/log/auth.log`, `/var/log/secure` o cualquier fichero que
-siga el formato `syslog`. No necesita nada más que Python.
+Funciona sobre `/var/log/auth.log`, `/var/log/secure`, la salida de `journalctl`
+o cualquier fichero que siga el formato `syslog`. No necesita nada más que Python.
 
 > Proyecto de **[Alejandro R. (@VloneAle21)](https://github.com/VloneAle21)** — ciberseguridad, IA y automatización.
 
@@ -51,11 +57,14 @@ python soc_monitor.py analizar /var/log/auth.log
 # Vigilar un log en tiempo real (aguanta la rotación de logrotate)
 python soc_monitor.py analizar /var/log/auth.log --seguir
 
+# Desde journald, sin fichero de por medio
+journalctl -u ssh -f | python soc_monitor.py analizar -
+
 # Guardar las alertas mientras se ven por consola
 python soc_monitor.py analizar auth.log --json alertas.jsonl --csv alertas.csv
 ```
 
-Instalación opcional como comando del sistema:
+Instalación como comando del sistema:
 
 ```bash
 pip install .
@@ -99,25 +108,65 @@ Los subcomandos mantienen los alias en inglés `run` y `list`.
 
 | Opción | Descripción |
 |---|---|
-| `fichero` | Ruta del log a analizar |
+| `fichero` | Ruta del log a analizar, o `-` para la entrada estándar |
 | `-s`, `--seguir` | Sigue el fichero en tiempo real, con soporte de rotación |
 | `--desde-inicio` | Junto a `--seguir`, procesa también lo ya escrito |
 | `--demo` | Ejecuta el escenario de ataque de ejemplo |
 | `--json RUTA` | Añade las alertas a un fichero JSONL |
 | `--csv RUTA` | Añade las alertas a un fichero CSV |
+| `--webhook URL` | Envía cada alerta por HTTP POST (Slack, Discord, SIEM…) |
+| `--excluir ORIGEN` | Origen de confianza que nunca alerta. Admite CIDR, IPv4 e IPv6. Repetible |
 | `-q`, `--silencioso` | Sin salida por consola, para tareas programadas |
 | `--sin-color` | Desactiva los colores (también se respeta `NO_COLOR`) |
 | `--gravedad-minima` | Descarta alertas por debajo del nivel indicado |
 | `--enfriamiento SEG` | Silencia cada pareja (detector, IP) N segundos tras alertar. `0` lo desactiva |
 | `--utc` | Interpreta las marcas del log como UTC en vez de hora local |
 
-Ejemplo típico en producción: sólo lo grave, sin ruido y persistido a disco.
+### Orígenes de confianza
+
+Sin una lista blanca, tu VPN, tu servidor de integración continua y tu propio
+sistema de monitorización acaban apareciendo como atacantes. `--excluir` acepta
+direcciones sueltas y redes CIDR de ambas familias, y se puede repetir:
+
+```bash
+soc-monitor analizar /var/log/auth.log \
+    --excluir 10.0.0.0/8 --excluir 192.168.0.0/16 \
+    --excluir 2001:db8::/32
+```
+
+Los orígenes excluidos se descartan **antes** de llegar a los detectores, así
+que tampoco ocupan sitio en las ventanas ni consumen memoria.
+
+### Avisos en tiempo real
 
 ```bash
 soc-monitor analizar /var/log/auth.log --seguir \
-    --gravedad-minima alta --enfriamiento 900 \
-    --json /var/log/soc/alertas.jsonl --silencioso
+    --gravedad-minima alta \
+    --webhook https://hooks.slack.com/services/XXX/YYY/ZZZ
 ```
+
+El cuerpo del POST es la alerta completa en JSON más un campo `text` con el
+resumen, que es lo que Slack, Discord y Teams muestran por defecto. Si el
+webhook está caído, el fallo se registra como aviso y el análisis continúa.
+
+---
+
+## Despliegue
+
+En [`deploy/soc-monitor.service`](deploy/soc-monitor.service) hay una unidad de
+systemd lista para usar, con el endurecimiento habitual (`ProtectSystem=strict`,
+`NoNewPrivileges`, `SystemCallFilter`, sin capacidades):
+
+```bash
+sudo useradd --system --no-create-home soc-monitor
+sudo mkdir -p /var/log/soc-monitor && sudo chown soc-monitor /var/log/soc-monitor
+sudo cp deploy/soc-monitor.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now soc-monitor
+journalctl -u soc-monitor -f
+```
+
+Ajusta la lista de `--excluir` a tus redes antes de activarla.
 
 ---
 
@@ -129,6 +178,7 @@ líneas de log → │  Parser  │ → │ Detectores │ → │ Motor  │ �
                 └──────────┘   └────────────┘   └────────┘   └────────┘
                 clasifica       ventana por IP   silencia     consola
                 y normaliza     y umbrales       y filtra     JSONL / CSV
+                                                             webhook
 ```
 
 - **Parser** — normaliza cada línea en un `Event(timestamp, source_ip, username, kind, port, facility)`.
@@ -139,11 +189,23 @@ líneas de log → │  Parser  │ → │ Detectores │ → │ Motor  │ �
 - **Detectores** — cada uno guarda una ventana deslizante por IP con **sólo los
   eventos que le competen**, y libera las IPs inactivas para no crecer sin
   límite.
-- **Motor** — coordina el flujo, filtra por gravedad y silencia alertas
-  repetidas durante un periodo que **caduca**, de modo que un atacante que
-  vuelve más tarde se vuelve a detectar.
-- **Salidas** — `StdoutSink` (con color sólo si hay terminal), `JSONSink` y
-  `CSVSink`.
+- **Motor** — descarta los orígenes de confianza, filtra por gravedad y silencia
+  alertas repetidas durante un periodo que **caduca**, de modo que un atacante
+  que vuelve más tarde se vuelve a detectar.
+- **Salidas** — `StdoutSink` (con color sólo si hay terminal), `JSONSink`,
+  `CSVSink` y `WebhookSink`.
+
+### Sobre las direcciones IP
+
+Se reconocen IPv4 e IPv6, incluidas la forma comprimida (`2001:db8::1`), las
+direcciones IPv4 mapeadas (`::ffff:203.0.113.5`) y el identificador de zona
+(`fe80::1%eth0`, que se normaliza a `fe80::1`).
+
+No hay un regex de IPv6 en el código, a propósito: escribir uno correcto es
+sorprendentemente difícil. Se captura un candidato permisivo y quien decide es
+`ipaddress.ip_address()`, de la librería estándar. Como efecto lateral, la
+dirección queda siempre en forma canónica, así que `2001:0db8::0001` y
+`2001:db8::1` se correlacionan como el mismo origen.
 
 ### Escribir un detector propio
 
@@ -222,15 +284,21 @@ analizar un log de la semana pasada produce alertas fechadas la semana pasada.
 ```bash
 pip install -r requirements-dev.txt
 python -m pytest -v
+ruff check . && ruff format --check .
 ```
 
 ```
-52 passed
+87 passed
 ```
 
-La batería cubre el parser, las marcas de tiempo, los tres detectores, el motor,
-las tres salidas y la CLI. La clase `TestRegresiones` fija además cada uno de
-los fallos corregidos en la 2.0.0, para que no vuelvan.
+La batería cubre el parser (IPv4 e IPv6), las marcas de tiempo, los tres
+detectores, la lista blanca, el motor, las cuatro salidas y la CLI. La clase
+`TestRegresiones` fija además cada uno de los fallos corregidos en la 2.0.0,
+para que no vuelvan.
+
+La CI ejecuta las pruebas en Python 3.10–3.13, comprueba el estilo con ruff,
+verifica que el paquete se instala y regenera `docs/demo.svg` para asegurarse de
+que la animación del README sigue coincidiendo con la salida real.
 
 ---
 
@@ -239,13 +307,15 @@ los fallos corregidos en la 2.0.0, para que no vuelvan.
 ```
 soc-monitor/
 ├── soc_monitor.py            # Toda la herramienta, en un solo fichero
-├── test_soc_monitor.py       # 52 pruebas con pytest
+├── test_soc_monitor.py       # 87 pruebas con pytest
 ├── sample_auth.log           # Log de ejemplo con ataque y tráfico legítimo
-├── pyproject.toml            # Empaquetado y configuración de pytest
-├── requirements.txt          # Vacío: sólo librería estándar
+├── tools/generar_demo.py     # Genera la animación del README
+├── deploy/                   # Unidad systemd endurecida
+├── docs/demo.svg             # Animación de terminal (generada)
+├── pyproject.toml            # Empaquetado, pytest y ruff
 ├── requirements-dev.txt      # pytest
 ├── CHANGELOG.md              # Registro de cambios
-└── .github/workflows/        # Integración continua (Python 3.10 – 3.13)
+└── .github/workflows/        # CI: lint, pruebas 3.10–3.13, demo al día
 ```
 
 ---
@@ -255,21 +325,28 @@ soc-monitor/
 **Encaja bien en:**
 
 - Laboratorio propio o práctica de *blue team*: convertir tu `auth.log` en alertas.
+- Servidores pequeños donde un SIEM completo no cabe ni compensa, con avisos por
+  webhook y `fail2ban` al lado encargándose del bloqueo.
 - CTF y formación: enseñar lógica de detección sobre tráfico controlado.
-- Máquinas pequeñas donde un SIEM completo no cabe ni compensa.
 - Aprender: el código está comentado y pensado para leerse de arriba abajo.
 
 **Limitaciones que conviene conocer:**
 
-- Correlaciona **por IP de origen**. Los eventos sin IP —un `sudo` fallido en
+- **Detecta, no responde.** No bloquea ni banea nada. Para eso está `fail2ban`,
+  que lleva veinte años haciéndolo bien; esto es la capa de visibilidad.
+- **Correlaciona por IP de origen.** Los eventos sin IP —un `sudo` fallido en
   consola local, por ejemplo— se descartan, porque agruparlos bajo una IP
   inventada mezclaría orígenes distintos.
-- La detección de escaneo se basa en lo que `sshd` registra, no en tráfico de
-  red. Para un barrido de puertos real, un IDS a nivel de paquete (Suricata,
+- **El estado no sobrevive a un reinicio.** Es deliberado: las ventanas duran
+  entre 30 y 120 segundos, así que un reinicio cuesta como mucho dos minutos de
+  contexto. Persistirlo añadiría un fichero de estado, su corrupción y su
+  migración a cambio de muy poco.
+- **La detección de escaneo se basa en lo que registra `sshd`**, no en tráfico
+  de red. Para un barrido de puertos real, un IDS a nivel de paquete (Suricata,
   Zeek) ve mucho más.
-- Es una herramienta de detección, no de respuesta: no bloquea ni banea nada.
-  Para eso, `fail2ban`.
-- Los umbrales por defecto son un punto de partida razonable, no una verdad
+- **Un solo host.** No agrega eventos de varias máquinas; para eso, envía el
+  JSONL a un colector.
+- **Los umbrales por defecto son un punto de partida razonable**, no una verdad
   universal. Ajústalos a tu tráfico o generarás ruido.
 
 ---
@@ -283,6 +360,7 @@ lateral, geolocalización anómala, exfiltración, web shells…
 git checkout -b feat/mi-detector
 # …código y pruebas…
 python -m pytest -v
+ruff check . && ruff format .
 git commit -m "feat: añade detector de movimiento lateral"
 ```
 
