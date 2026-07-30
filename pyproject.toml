@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "soc-monitor"
+version = "2.0.0"
+description = "Centro de Operaciones de Seguridad ligero: detección de fuerza bruta, escaneo de puertos y fallos de autenticación sobre logs syslog/auth.log"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "Alejandro R.", email = "alejandroroman07ies@gmail.com" }]
+keywords = ["seguridad", "soc", "siem", "blue-team", "syslog", "deteccion", "ids"]
+dependencies = []
+
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: System Administrators",
+  "License :: OSI Approved :: MIT License",
+  "Natural Language :: Spanish",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Security",
+  "Topic :: System :: Monitoring",
+]
+
+[project.urls]
+Repositorio = "https://github.com/VloneAle21/soc-monitor"
+Incidencias = "https://github.com/VloneAle21/soc-monitor/issues"
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4"]
+
+[project.scripts]
+soc-monitor = "soc_monitor:main"
+
+[tool.setuptools]
+py-modules = ["soc_monitor"]
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+python_files = ["test_*.py"]
+addopts = "-ra --strict-markers"

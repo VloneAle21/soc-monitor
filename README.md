@@ -1,237 +1,307 @@
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:0d1117,50:1f6feb,100:0d1117&height=180&section=header&text=SOC%20Monitor&fontSize=45&fontColor=ffffff&fontAlignY=35&desc=Lightweight%20Security%20Operations%20Center%20in%20Python&descSize=16&descColor=c9d1d9&descAlignY=58&animation=fadeIn" width="100%" alt="banner"/>
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:0d1117,50:1f6feb,100:0d1117&height=180&section=header&text=SOC%20Monitor&fontSize=45&fontColor=ffffff&fontAlignY=35&desc=Centro%20de%20Operaciones%20de%20Seguridad%20ligero%20en%20Python&descSize=15&descColor=c9d1d9&descAlignY=58&animation=fadeIn" width="100%" alt="banner"/>
 
 <br/>
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/Tests-11%20passing-success?style=for-the-badge&logo=pytest&logoColor=white)](#-testing)
-[![License: MIT](https://img.shields.io/badge/License-MIT-1f6feb?style=for-the-badge&logo=opensourceinitiative&logoColor=white)](LICENSE)
-[![No deps](https://img.shields.io/badge/Dependencies-Zero-00d4aa?style=for-the-badge&logo=python&logoColor=white)](requirements.txt)
-[![Stars](https://img.shields.io/github/stars/VloneAle21/soc-monitor?style=for-the-badge&logo=github&color=yellow)](https://github.com/VloneAle21/soc-monitor/stargazers)
+[![tests](https://github.com/VloneAle21/soc-monitor/actions/workflows/tests.yml/badge.svg)](https://github.com/VloneAle21/soc-monitor/actions/workflows/tests.yml)
+[![Python](https://img.shields.io/badge/Python-3.10%20%E2%80%93%203.13-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![Licencia MIT](https://img.shields.io/badge/Licencia-MIT-1f6feb?style=flat-square&logo=opensourceinitiative&logoColor=white)](LICENSE)
+[![Sin dependencias](https://img.shields.io/badge/Dependencias-Ninguna-00d4aa?style=flat-square&logo=python&logoColor=white)](requirements.txt)
+[![Estrellas](https://img.shields.io/github/stars/VloneAle21/soc-monitor?style=flat-square&logo=github&color=yellow)](https://github.com/VloneAle21/soc-monitor/stargazers)
 
-<img src="https://readme-typing-svg.demolab.com?font=Fira+Code&size=18&duration=3000&pause=600&color=58A6FF&center=true&vCenter=true&multiline=true&width=620&height=70&lines=Brute-force+%C2%B7+Port-scan+%C2%B7+Auth-fail+detection;Rolling-window+state+engine;JSON+%2F+CSV+alert+sinks+%2B+live+dashboard" alt="Typing SVG"/>
-
-<br/>
+**Detección de fuerza bruta, escaneo de puertos y fallos de autenticación sobre `syslog` / `auth.log`.**
+Un solo fichero, cero dependencias, pensado para leerse y ampliarse.
 
 </div>
 
 ---
 
-## 🧠 What is this?
+## Qué es
 
-**SOC Monitor** is a lightweight, dependency-free **Security Operations Center** toolkit written in pure Python. It parses syslog / `auth.log` streams in real time and raises alerts when it spots attack patterns commonly seen by blue-team analysts:
+**SOC Monitor** analiza logs de autenticación en busca de los patrones de ataque
+que un analista de *blue team* revisa a diario, y levanta alertas cuando alguno
+cruza un umbral dentro de una ventana de tiempo:
 
-- 🔓 **SSH brute-force** — many failed authentications from one IP within a sliding window
-- 📡 **Port scanning** — many connections to distinct ports from a single source
-- 🌪️ **Auth-failure storm** — cross-service authentication failures clustered together
+| Detector | Qué busca | Ventana | Umbral | Gravedad |
+|---|---|---:|---:|---|
+| `ssh_fuerza_bruta` | Fallos de autenticación SSH repetidos desde un mismo origen | 60 s | 5 | alta |
+| `escaneo_puertos` | Conexiones a muchos puertos distintos desde un mismo origen | 30 s | 10 | media |
+| `tormenta_autenticacion` | Fallos de autenticación agrupados entre varios servicios | 120 s | 8 | media / alta |
 
-Designed to be readable, hackable and easy to extend with your own detectors.
+Funciona sobre `/var/log/auth.log`, `/var/log/secure` o cualquier fichero que
+siga el formato `syslog`. No necesita nada más que Python.
 
-> Built by **[Alejandro R. (@VloneAle21)](https://github.com/VloneAle21)** — cybersecurity, AI & automation.
-
----
-
-## ✨ Features
-
-| | Feature | Description |
-|---|---|---|
-| 🧩 | **Pluggable detectors** | Each detector owns a rolling window per source IP. Add your own by subclassing `Detector`. |
-| 📊 | **Multiple sinks** | Emit alerts to console (colored), JSONL and CSV simultaneously. |
-| ⏱️ | **Live tail mode** | `--follow` tails a log file like `tail -f` for real-time monitoring. |
-| 🧪 | **Demo mode** | `--demo` runs a built-in attack scenario — no real logs required. |
-| 🚫 | **Zero dependencies** | Standard library only. Just `python soc_monitor.py`. |
-| 🧱 | **Clean architecture** | Parser → Detectors → Engine → Sinks. Easy to test and reason about. |
+> Proyecto de **[Alejandro R. (@VloneAle21)](https://github.com/VloneAle21)** — ciberseguridad, IA y automatización.
 
 ---
 
-## 🚀 Quick start
+## Empezar
 
 ```bash
-# 1. Clone
 git clone https://github.com/VloneAle21/soc-monitor.git
 cd soc-monitor
 
-# 2. Run the built-in attack scenario (no logs needed)
-python soc_monitor.py run --demo
+# Escenario de ataque simulado, sin necesidad de logs reales
+python soc_monitor.py analizar --demo
 
-# 3. Or analyze a real auth.log
-python soc_monitor.py run /var/log/auth.log
+# Analizar un log real
+python soc_monitor.py analizar /var/log/auth.log
 
-# 4. Tail a log in real time
-python soc_monitor.py run /var/log/auth.log --follow
+# Vigilar un log en tiempo real (aguanta la rotación de logrotate)
+python soc_monitor.py analizar /var/log/auth.log --seguir
 
-# 5. Save alerts to JSON + CSV while watching the console
-python soc_monitor.py run auth.log --json alerts.jsonl --csv alerts.csv
+# Guardar las alertas mientras se ven por consola
+python soc_monitor.py analizar auth.log --json alertas.jsonl --csv alertas.csv
 ```
 
-### Demo output
-
-```
-[15:38:39] [HIGH    ] SSH brute-force from 203.0.113.5
-          ↳ 5 failed SSH auth attempts from 203.0.113.5 within 60s
-          ↳ source: 203.0.113.5 · detector: ssh_bruteforce
-[15:38:39] [MEDIUM  ] Port scan from 203.0.113.5
-          ↳ 10 connections to 10 distinct ports (5100,5101,…) within 30s
-          ↳ source: 203.0.113.5 · detector: port_scan
-[15:38:39] [MEDIUM  ] Auth failure storm from 203.0.113.5
-          ↳ 20 authentication failures across services from 203.0.113.5 within 120s
-          ↳ source: 203.0.113.5 · detector: auth_fail_storm
-```
-
----
-
-## 🛠️ Usage
-
-```
-usage: soc-monitor [-h] [--version] {run,list} ...
-
-🛡️ Lightweight SOC monitor — brute-force, port-scan & auth-fail detection.
-
-commands:
-  run        Analyze a log file or stream
-  list       List available detectors
-```
-
-### `run` options
-
-| Flag | Description |
-|---|---|
-| `file` | Path to a syslog/auth log file |
-| `-f, --follow` | Tail the file in real time (like `tail -f`) |
-| `--demo` | Run the built-in attack scenario |
-| `--json PATH` | Append alerts to a JSONL file |
-| `--csv PATH` | Append alerts to a CSV file |
-| `-q, --quiet` | Suppress console output (useful for batch jobs) |
-
----
-
-## 🧩 Detectors
-
-List the built-in detectors:
+Instalación opcional como comando del sistema:
 
 ```bash
-python soc_monitor.py list
+pip install .
+soc-monitor analizar --demo
 ```
 
+### Salida
+
 ```
-Available detectors:
-  • ssh_bruteforce    window=60s  threshold=5
-  • port_scan         window=30s  threshold=10
-  • auth_fail_storm   window=120s threshold=8
+[29/07 12:00:08] [ALTA    ] Fuerza bruta SSH desde 203.0.113.5
+          ↳ 5 intentos fallidos de autenticación SSH desde 203.0.113.5 en 60s (usuarios probados: admin, root, test)
+          ↳ origen: 203.0.113.5 · detector: ssh_fuerza_bruta
+[29/07 12:00:29] [MEDIA   ] Escaneo de puertos desde 203.0.113.5
+          ↳ 10 conexiones a 10 puertos distintos (52001, 52002, 52003, 52004, 52005, …) en 30s
+          ↳ origen: 203.0.113.5 · detector: escaneo_puertos
+[29/07 12:01:10] [ALTA    ] Tormenta de fallos de autenticación desde 203.0.113.5
+          ↳ 8 fallos de autenticación desde 203.0.113.5 en 120s (servicios afectados: dovecot, sshd)
+          ↳ origen: 203.0.113.5 · detector: tormenta_autenticacion
+
+— análisis completado · líneas=28 · eventos=25 · alertas=3 · silenciadas=5
 ```
 
-### Writing your own detector
+Los recuentos son literales: si la alerta dice **8 fallos**, hay exactamente 8
+fallos de autenticación en la ventana. El tráfico legítimo intercalado —el
+`Accepted password` de `198.51.100.7` en el log de ejemplo— no suma.
+
+---
+
+## Uso
+
+```
+soc-monitor [-h] [--version] [-v] {analizar,detectores} ...
+
+  analizar     Analiza un fichero de log o un flujo en tiempo real
+  detectores   Lista los detectores disponibles
+```
+
+Los subcomandos mantienen los alias en inglés `run` y `list`.
+
+### Opciones de `analizar`
+
+| Opción | Descripción |
+|---|---|
+| `fichero` | Ruta del log a analizar |
+| `-s`, `--seguir` | Sigue el fichero en tiempo real, con soporte de rotación |
+| `--desde-inicio` | Junto a `--seguir`, procesa también lo ya escrito |
+| `--demo` | Ejecuta el escenario de ataque de ejemplo |
+| `--json RUTA` | Añade las alertas a un fichero JSONL |
+| `--csv RUTA` | Añade las alertas a un fichero CSV |
+| `-q`, `--silencioso` | Sin salida por consola, para tareas programadas |
+| `--sin-color` | Desactiva los colores (también se respeta `NO_COLOR`) |
+| `--gravedad-minima` | Descarta alertas por debajo del nivel indicado |
+| `--enfriamiento SEG` | Silencia cada pareja (detector, IP) N segundos tras alertar. `0` lo desactiva |
+| `--utc` | Interpreta las marcas del log como UTC en vez de hora local |
+
+Ejemplo típico en producción: sólo lo grave, sin ruido y persistido a disco.
+
+```bash
+soc-monitor analizar /var/log/auth.log --seguir \
+    --gravedad-minima alta --enfriamiento 900 \
+    --json /var/log/soc/alertas.jsonl --silencioso
+```
+
+---
+
+## Arquitectura
+
+```
+                ┌──────────┐   ┌────────────┐   ┌────────┐   ┌────────┐
+líneas de log → │  Parser  │ → │ Detectores │ → │ Motor  │ → │ Salidas│
+                └──────────┘   └────────────┘   └────────┘   └────────┘
+                clasifica       ventana por IP   silencia     consola
+                y normaliza     y umbrales       y filtra     JSONL / CSV
+```
+
+- **Parser** — normaliza cada línea en un `Event(timestamp, source_ip, username, kind, port, facility)`.
+  La clave está en `kind`: el tipo de evento (`fallo_autenticacion`,
+  `autenticacion_correcta`, `conexion`, `otro`) se decide **una sola vez**, y
+  los detectores filtran por él en lugar de rebuscar palabras en el texto. Eso
+  hace que la lógica de detección no dependa del idioma del log.
+- **Detectores** — cada uno guarda una ventana deslizante por IP con **sólo los
+  eventos que le competen**, y libera las IPs inactivas para no crecer sin
+  límite.
+- **Motor** — coordina el flujo, filtra por gravedad y silencia alertas
+  repetidas durante un periodo que **caduca**, de modo que un atacante que
+  vuelve más tarde se vuelve a detectar.
+- **Salidas** — `StdoutSink` (con color sólo si hay terminal), `JSONSink` y
+  `CSVSink`.
+
+### Escribir un detector propio
 
 ```python
-from soc_monitor import Detector, Event, Alert
+from soc_monitor import Detector, Event, Alert, EventKind, Severity, SOCEngine, StdoutSink
 
-class MyDetector(Detector):
-    name = "my_detector"
-    window_seconds = 90
+class WebShellDetector(Detector):
+    name = "web_shell"
+    description = "Peticiones sospechosas a ficheros subidos"
+    window_seconds = 300
     threshold = 3
+    severity = Severity.CRITICAL
 
-    def _evaluate(self, event: Event) -> Alert | None:
-        # your logic here — return an Alert when a threshold is crossed
-        ...
+    def matches(self, event: Event) -> bool:
+        # Sólo entran en la ventana los eventos que te interesan.
+        return event.kind is EventKind.OTHER and ".php" in event.raw
 
-# register it in the engine
-engine = SOCEngine(detectors=[MyDetector()], sinks=[StdoutSink()])
-engine.process(open("auth.log"))
+    def _evaluate(self, event: Event, ahora) -> Alert | None:
+        ventana = self._buckets[event.source_ip]
+        if len(ventana) < self.threshold:
+            return None
+        return Alert(
+            detector=self.name,
+            severity=self.severity,
+            title=f"Posible web shell desde {event.source_ip}",
+            description=f"{len(ventana)} peticiones sospechosas en {self.window_seconds}s",
+            source_ip=event.source_ip,
+            events=list(ventana),
+            timestamp=event.timestamp,
+        )
+
+engine = SOCEngine(detectors=[WebShellDetector()], sinks=[StdoutSink()])
+engine.process(open("/var/log/auth.log"))
 ```
 
-Each detector maintains a per-IP `deque` window that is pruned automatically — so memory stays bounded even on high-volume logs.
+Separar `matches()` de `_evaluate()` es lo que garantiza que el recuento de la
+alerta sea real: lo que no pasa el filtro, no ocupa sitio en la ventana.
 
 ---
 
-## 🏗️ Architecture
+## Formato de las alertas
 
-```
-            ┌──────────┐    ┌────────────┐    ┌────────┐    ┌───────┐
-log lines → │  Parser  │ →  │  Detectors │ →  │ Engine │ → │ Sinks │
-            └──────────┘    └────────────┘    └────────┘    └───────┘
-              syslog          brute-force       orchestrates   console
-              regexes         port-scan         cooldown       JSONL
-              IP extract      auth-fail                        CSV
+Cada línea del fichero JSONL es una alerta completa, lista para ingerir en un
+SIEM. Las claves están en inglés a propósito, para que encajen con los esquemas
+habituales (ECS, Splunk, OpenSearch); los valores van en español.
+
+```json
+{
+  "timestamp": "2026-07-29T12:00:08+02:00",
+  "detector": "ssh_fuerza_bruta",
+  "severity": "alta",
+  "title": "Fuerza bruta SSH desde 203.0.113.5",
+  "description": "5 intentos fallidos de autenticación SSH desde 203.0.113.5 en 60s (usuarios probados: admin, root, test)",
+  "source_ip": "203.0.113.5",
+  "events": [
+    {
+      "timestamp": "2026-07-29T12:00:00+02:00",
+      "source_ip": "203.0.113.5",
+      "username": "root",
+      "kind": "fallo_autenticacion",
+      "port": 51001,
+      "facility": "sshd",
+      "message": "Fallo de autenticación SSH para el usuario «root»"
+    }
+  ]
+}
 ```
 
-- **Parser** — normalizes a raw line into an `Event(timestamp, source_ip, username, message)`
-- **Detectors** — stateful, per-IP rolling windows, emit `Alert`s
-- **Engine** — wires parsers + detectors + sinks, dedupes alerts with a cooldown
-- **Sinks** — `StdoutSink` (colored), `JSONSink`, `CSVSink`
+`timestamp` es la marca del evento que dispara la alerta, no la hora del reloj:
+analizar un log de la semana pasada produce alertas fechadas la semana pasada.
 
 ---
 
-## 🧪 Testing
+## Pruebas
 
 ```bash
-python -m pytest test_soc_monitor.py -v
+pip install -r requirements-dev.txt
+python -m pytest -v
 ```
 
 ```
-11 passed in 0.10s
+52 passed
 ```
 
-Tests cover the syslog parser, each detector's threshold behaviour, the alert severity model and the JSON sink output.
+La batería cubre el parser, las marcas de tiempo, los tres detectores, el motor,
+las tres salidas y la CLI. La clase `TestRegresiones` fija además cada uno de
+los fallos corregidos en la 2.0.0, para que no vuelvan.
 
 ---
 
-## 📁 Project structure
+## Estructura del proyecto
 
 ```
 soc-monitor/
-├── soc_monitor.py        # The whole toolkit (single file, ~600 lines)
-├── test_soc_monitor.py   # 11 pytest unit tests
-├── sample_auth.log       # Example attack log to play with
-├── requirements.txt      # Empty — stdlib only!
-└── README.md
+├── soc_monitor.py            # Toda la herramienta, en un solo fichero
+├── test_soc_monitor.py       # 52 pruebas con pytest
+├── sample_auth.log           # Log de ejemplo con ataque y tráfico legítimo
+├── pyproject.toml            # Empaquetado y configuración de pytest
+├── requirements.txt          # Vacío: sólo librería estándar
+├── requirements-dev.txt      # pytest
+├── CHANGELOG.md              # Registro de cambios
+└── .github/workflows/        # Integración continua (Python 3.10 – 3.13)
 ```
 
 ---
 
-## 🛡️ Use cases
+## Para qué sirve, y para qué no
 
-- **Homelab / blue-team practice** — turn your `auth.log` into live alerts
-- **CTF / training** — demonstrate detection logic on synthetic traffic
-- **Embedded SOC** — ship a tiny IDS where a full SIEM won't fit
-- **Learning** — readable, well-commented detection code for newcomers
+**Encaja bien en:**
 
-> ⚠️ This is a detection helper, not a hardened product. For production use, pair it with proper logging, rate limits and a managed SIEM.
+- Laboratorio propio o práctica de *blue team*: convertir tu `auth.log` en alertas.
+- CTF y formación: enseñar lógica de detección sobre tráfico controlado.
+- Máquinas pequeñas donde un SIEM completo no cabe ni compensa.
+- Aprender: el código está comentado y pensado para leerse de arriba abajo.
+
+**Limitaciones que conviene conocer:**
+
+- Correlaciona **por IP de origen**. Los eventos sin IP —un `sudo` fallido en
+  consola local, por ejemplo— se descartan, porque agruparlos bajo una IP
+  inventada mezclaría orígenes distintos.
+- La detección de escaneo se basa en lo que `sshd` registra, no en tráfico de
+  red. Para un barrido de puertos real, un IDS a nivel de paquete (Suricata,
+  Zeek) ve mucho más.
+- Es una herramienta de detección, no de respuesta: no bloquea ni banea nada.
+  Para eso, `fail2ban`.
+- Los umbrales por defecto son un punto de partida razonable, no una verdad
+  universal. Ajústalos a tu tráfico o generarás ruido.
 
 ---
 
-## 🤝 Contributing
+## Contribuir
 
-Contributions welcome — especially new detectors (web-shell detection, lateral movement, unusual geo, etc.). Fork, branch, add a test, open a PR.
+Las aportaciones son bienvenidas, sobre todo detectores nuevos: movimiento
+lateral, geolocalización anómala, exfiltración, web shells…
 
 ```bash
-git checkout -b feat/my-detector
-# …write code + tests…
+git checkout -b feat/mi-detector
+# …código y pruebas…
 python -m pytest -v
-git commit -m "feat: add my detector"
+git commit -m "feat: añade detector de movimiento lateral"
 ```
 
----
-
-## 📄 License
-
-Released under the **MIT License**. See [LICENSE](LICENSE).
+Todo detector nuevo debería traer sus pruebas: al menos una que confirme que
+salta cuando debe, y otra que confirme que **no** salta con tráfico legítimo.
+La segunda es la que de verdad cuesta y la que evita los falsos positivos.
 
 ---
+
+## Licencia
+
+Publicado bajo licencia **MIT**. Ver [LICENSE](LICENSE).
 
 <div align="center">
-
 <br/>
 
-<img src="https://komarev.com/ghpvc/?username=VloneAle21&style=flat-square&color=blueviolet" alt="views"/>
-&nbsp;
-<img src="https://img.shields.io/github/last-commit/VloneAle21/soc-monitor?style=flat-square&logo=github&color=blue" alt="last commit"/>
-&nbsp;
-<img src="https://img.shields.io/github/repo-size/VloneAle21/soc-monitor?style=flat-square&logo=github&color=green" alt="repo size"/>
+**Si te ha resultado útil, una estrella ayuda.**
 
-**⭐ If this was useful, star the repo — it helps a lot.**
-
-Made with 🛡️ by **[Alejandro R.](https://github.com/VloneAle21)**
+Hecho con 🛡️ por **[Alejandro R.](https://github.com/VloneAle21)**
 
 <img src="https://capsule-render.vercel.app/api?type=waving&color=0:0d1117,50:1f6feb,100:0d1117&height=100&section=footer&text=&fontSize=0&animation=fadeIn" width="100%" alt="footer"/>
 
