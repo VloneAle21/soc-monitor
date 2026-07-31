@@ -4,7 +4,7 @@
 
 <br/>
 
-[![tests](https://github.com/VloneAle21/soc-monitor/actions/workflows/tests.yml/badge.svg)](https://github.com/VloneAle21/soc-monitor/actions/workflows/tests.yml)
+[![pruebas](https://github.com/VloneAle21/soc-monitor/actions/workflows/tests.yml/badge.svg)](https://github.com/VloneAle21/soc-monitor/actions/workflows/tests.yml)
 [![Python](https://img.shields.io/badge/Python-3.10%20%E2%80%93%203.13-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![Licencia MIT](https://img.shields.io/badge/Licencia-MIT-1f6feb?style=flat-square&logo=opensourceinitiative&logoColor=white)](LICENSE)
 [![Sin dependencias](https://img.shields.io/badge/Dependencias-Ninguna-00d4aa?style=flat-square&logo=python&logoColor=white)](requirements.txt)
